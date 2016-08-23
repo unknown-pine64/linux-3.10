@@ -115,15 +115,12 @@ static int rx_reg[16] = {HDMI_CEC_RX_DATA0, HDMI_CEC_RX_DATA1, HDMI_CEC_RX_DATA2
             HDMI_CEC_RX_DATA12, HDMI_CEC_RX_DATA13, HDMI_CEC_RX_DATA14,\
             HDMI_CEC_RX_DATA15};
 
-
-/* FIXME : get base address from resource */
-
-void hdmi_writel(u32 value, unsigned int reg)
+static void hdmi_writel(u32 value, unsigned int reg)
 {
     __raw_writel(value, (unsigned long long)hdmi_base_addr + reg);
 }
 
-u32 hdmi_readl(unsigned int reg)
+static u32 hdmi_readl(unsigned int reg)
 {
     u32 value;
 
@@ -131,26 +128,19 @@ u32 hdmi_readl(unsigned int reg)
     return value;
 }
 
-u8 hdmi_readb(unsigned int reg)
+static u8 hdmi_readb(unsigned int reg)
 {
     u8 value;
 
     /* unlock read access */
     hdmi_writel(0x54524545, 0x10010);
     value = __raw_readb((unsigned long long)hdmi_base_addr + reg);
-    //hdmi_writel(0x57415452, 0x10010);
     return value;
 }
 
-void hdmi_writeb(u8 value, unsigned int reg)
+static void hdmi_writeb(u8 value, unsigned int reg)
 {
     __raw_writeb(value, (unsigned long long)hdmi_base_addr + reg);
-}
-
-
-static void hdmi_write(unsigned int addr, unsigned char data)
-{
-    hdmi_writeb(data, addr);
 }
 
 static int sunxi_hdmi_notify(struct notifier_block *nb,
@@ -158,6 +148,7 @@ static int sunxi_hdmi_notify(struct notifier_block *nb,
 {
     u8 val = 0;
     struct hdmi_cec_event *event = NULL;
+    pr_info("[CEC]sunxi_hdmi_notify: %d\n", code);
 
     if (open_count) {
         switch (code) {
@@ -812,56 +803,6 @@ const struct file_operations hdmi_cec_fops = {
     .poll = hdmi_cec_poll,
 };
 
-static struct task_struct * cec_task = NULL;
-
-// static void hdmi_delay_ms(unsigned long ms)
-// {
-//     u32 timeout = ms*HZ/1000;
-//     set_current_state(TASK_INTERRUPTIBLE);
-//     schedule_timeout(timeout);
-// }
-
-static int cec_thread(void *parg)
-{
-    u8 cec_stat;
-    u8 val;
-
-    // hdmi_writel(0x4, 0x1003c);
-    printk(KERN_INFO "HDMI cec_thread started\n");
-
-    while (1) {
-        if (kthread_should_stop()) {
-            break;
-        }
-
-        hdmi_writeb(0x7f, HDMI_IH_MUTE_CEC_STAT0);
-        cec_stat = hdmi_readb(HDMI_IH_CEC_STAT0);
-        hdmi_writeb(cec_stat, HDMI_IH_CEC_STAT0);
-
-        if ((cec_stat & (HDMI_IH_CEC_STAT0_ERROR_INIT | \
-             HDMI_IH_CEC_STAT0_NACK | HDMI_IH_CEC_STAT0_EOM | \
-             HDMI_IH_CEC_STAT0_DONE)) == 0) {
-           hdmi_delay_ms(10);
-           continue;
-        }
-
-        printk(KERN_INFO "cec_thread cec_stat=%d\n", cec_stat);
-
-        if (!(cec_stat & HDMI_IH_CEC_STAT0_EOM)) {
-            printk(KERN_INFO "cec_thread disable sending\n");
-            hdmi_writel(0x84, 0x1003c);
-        }
-
-        hdmi_cec_handle(cec_stat);
-
-        val = HDMI_IH_CEC_STAT0_WAKEUP | HDMI_IH_CEC_STAT0_ERROR_FOLL | HDMI_IH_CEC_STAT0_ARB_LOST;
-        hdmi_writeb(val, HDMI_IH_MUTE_CEC_STAT0);
-    }
-
-    printk(KERN_INFO "HDMI cec_thread finished\n");
-    return 0;
-}
-
 static int __init hdmi_cec_init(void)
 {
     int err = 0;
@@ -870,20 +811,20 @@ static int __init hdmi_cec_init(void)
     struct device *temp_class;
 
     if(!hdmi_base_addr) {
-    pr_err("hdmi_cec: unable to find hdmi_base_addr\n");
-    err = -EBUSY;
-    goto out;
+        pr_err("hdmi_cec: unable to find hdmi_base_addr\n");
+        err = -EBUSY;
+        goto out;
     }
 
     printk(KERN_INFO "HDMI CEC base address: %p\n", hdmi_base_addr);
 
-    hdmi_write(HDMI_IH_MUTE, 0xFF);
-    hdmi_write(HDMI_PHY_MASK0, 0xff);
-    hdmi_write(HDMI_IH_MUTE_PHY_STAT0, 0xff);
-    hdmi_write(HDMI_IH_MUTE_I2CM_STAT0, 0xff);
-    hdmi_write(HDMI_IH_MUTE, 0x00);
-    hdmi_write(HDMI_CEC_ADDR_L, 0xff);
-    hdmi_write(HDMI_CEC_ADDR_H, 0xff);
+    hdmi_writeb(0xFF, HDMI_IH_MUTE);
+    hdmi_writeb(0xFF, HDMI_PHY_MASK0);
+    hdmi_writeb(0xFF, HDMI_IH_MUTE_PHY_STAT0);
+    hdmi_writeb(0xFF, HDMI_IH_MUTE_I2CM_STAT0);
+    hdmi_writeb(0x00, HDMI_IH_MUTE);
+    hdmi_writeb(0xFF, HDMI_CEC_ADDR_L);
+    hdmi_writeb(0xFF, HDMI_CEC_ADDR_H);
 
     printk(KERN_INFO "HDMI CEC registering chrdev\n");
 
@@ -899,22 +840,11 @@ static int __init hdmi_cec_init(void)
     spin_lock_init(&hdmi_cec_data.irq_lock);
     hdmi_cec_data.cec_irq = irqhdmi;
 
-    if (hdmi_cec_data.cec_irq > 0) {
-        err = request_irq(hdmi_cec_data.cec_irq, hdmi_cec_isr, IRQF_SHARED,
-                  "sunxi_hdmi_cec", &hdmi_cec_data);
-        if (err < 0) {
-            pr_err("hdmi_cec:Unable to request irq: %d\n", err);
-            goto err_out_chrdev;
-        }
-    } else {
-        cec_task = kthread_create(cec_thread, (void*)0, "cec proc");
-        if (IS_ERR(cec_task)) {
-            err = PTR_ERR(cec_task);
-            cec_task = NULL;
-            goto err_out_chrdev;
-        } else {
-            wake_up_process(cec_task);
-        }
+    err = request_irq(hdmi_cec_data.cec_irq, hdmi_cec_isr, IRQF_SHARED,
+              "sunxi_hdmi_cec", &hdmi_cec_data);
+    if (err < 0) {
+        pr_err("hdmi_cec:Unable to request irq: %d\n", err);
+        goto err_out_chrdev;
     }
 
     printk(KERN_INFO "HDMI CEC create sunxi_hdmi_cec\n");
@@ -963,11 +893,6 @@ static void __exit hdmi_cec_exit(void)
 
     if (hdmi_cec_data.cec_irq > 0)
         free_irq(hdmi_cec_data.cec_irq, &hdmi_cec_data);
-
-    if (cec_task) {
-        kthread_stop(cec_task);
-        cec_task = NULL;
-    }
 
     if (hdmi_cec_major > 0) {
         device_destroy(hdmi_cec_class, MKDEV(hdmi_cec_major, 0));

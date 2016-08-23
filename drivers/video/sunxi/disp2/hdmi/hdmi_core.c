@@ -94,6 +94,7 @@ s32 hdmi_core_initial(bool sw_only)
 			if (0 == (hdmi_hpd_mask & 0x100))
 				hdmi_hpd_event();
 		}
+		sunxi_hdmi_notifier_call_chain(hdmi_state);
 	} else {
 		bsp_hdmi_init();
 	}
@@ -174,6 +175,7 @@ s32 hdmi_core_loop(void)
 			bsp_hdmi_standby();
 
 			hdmi_state = HDMI_State_Wait_Hpd;
+			sunxi_hdmi_notifier_call_chain(hdmi_state);
 		case HDMI_State_Wait_Hpd:
 			__inf("HDMI_State_Wait_Hpd\n");
 			if (HPD) {
@@ -206,6 +208,7 @@ s32 hdmi_core_loop(void)
 		default:
 			__wrn(" unkonwn hdmi state, set to idle\n");
 			hdmi_state = HDMI_State_Idle;
+			sunxi_hdmi_notifier_call_chain(hdmi_state);
 			return 0;
 	}
 }
